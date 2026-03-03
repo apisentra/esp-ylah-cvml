@@ -7,6 +7,9 @@
 #include "esp_gatt_common_api.h"
 #include <string.h>
 #include "config_repo.h"
+#include "esp_sntp.h"
+#include <time.h>
+#include <sys/time.h>
 
 #define TAG "BLE_CONFIG"
 
@@ -18,6 +21,7 @@
 #define THRESHOLD_CHAR_UUID 0xFF02
 #define SSID_CHAR_UUID 0xFF03
 #define WIFI_PASSWORD_CHAR_UUID 0xFF04
+#define SET_RTC_EPOCH_TIME 0xFF05
 
 #define MAX_SERVER_LEN 128
 
@@ -34,12 +38,14 @@ static uint16_t server_url_handle = 0;
 static uint16_t threshold_handle = 0;
 static uint16_t ssid_handle = 0;
 static uint16_t wifi_password_handle = 0;
+static uint16_t rtc_epoch_handle = 0;
 
 static uint16_t service_handle;
 static esp_gatt_if_t gatts_if_global;
 
 static char server_url[128] = "https://api.example.com";
 static int threshold = 50;
+static uint32_t rtc_epoch_time = 0;
 
 static esp_bt_uuid_t service_uuid = {
     .len = ESP_UUID_LEN_16,
@@ -60,6 +66,10 @@ static esp_bt_uuid_t ssid_uid = {
 static esp_bt_uuid_t wifi_password = {
     .len = ESP_UUID_LEN_16,
     .uuid = {.uuid16 = WIFI_PASSWORD_CHAR_UUID}};
+
+static esp_bt_uuid_t rtc_epoch_time_uuid = {
+    .len = ESP_UUID_LEN_16,
+    .uuid = {.uuid16 = SET_RTC_EPOCH_TIME}};
 
 static void start_advertising(void)
 {
@@ -90,8 +100,14 @@ static void gatts_event_handler(esp_gatts_cb_event_t event,
                                 esp_gatt_if_t gatts_if,
                                 esp_ble_gatts_cb_param_t *param)
 {
+
     switch (event)
     {
+
+    case ESP_GATTS_DISCONNECT_EVT:
+        ESP_LOGI(TAG, "Client disconnected, restarting advertising");
+        start_advertising();
+        break;
 
     case ESP_GATTS_READ_EVT:
     {
@@ -106,17 +122,74 @@ static void gatts_event_handler(esp_gatts_cb_event_t event,
         {
             value_ptr = (uint8_t *)server_url;
             len = strlen(server_url);
+
+            esp_gatt_rsp_t rsp;
+            memset(&rsp, 0, sizeof(rsp)); // zero init
+
+            rsp.attr_value.handle = handle;
+            rsp.attr_value.len = len;
+
+            // Copy the actual value into the array
+            if (value_ptr && len > 0)
+            {
+                memcpy(rsp.attr_value.value, value_ptr, len);
+            }
+
+            esp_ble_gatts_send_response(
+                gatts_if,
+                param->read.conn_id,
+                param->read.trans_id,
+                ESP_GATT_OK,
+                &rsp);
         }
         else if (handle == threshold_handle)
         {
             value_ptr = (uint8_t *)&threshold;
             len = sizeof(threshold);
+
+            esp_gatt_rsp_t rsp;
+            memset(&rsp, 0, sizeof(rsp)); // zero init
+
+            rsp.attr_value.handle = handle;
+            rsp.attr_value.len = len;
+
+            // Copy the actual value into the array
+            if (value_ptr && len > 0)
+            {
+                memcpy(rsp.attr_value.value, value_ptr, len);
+            }
+
+            esp_ble_gatts_send_response(
+                gatts_if,
+                param->read.conn_id,
+                param->read.trans_id,
+                ESP_GATT_OK,
+                &rsp);
         }
         else if (handle == ssid_handle)
         {
             ESP_LOGI(TAG, "Value SSID : %s", ssid);
             value_ptr = (uint8_t *)ssid;
             len = strlen(ssid);
+
+            esp_gatt_rsp_t rsp;
+            memset(&rsp, 0, sizeof(rsp)); // zero init
+
+            rsp.attr_value.handle = handle;
+            rsp.attr_value.len = len;
+
+            // Copy the actual value into the array
+            if (value_ptr && len > 0)
+            {
+                memcpy(rsp.attr_value.value, value_ptr, len);
+            }
+
+            esp_ble_gatts_send_response(
+                gatts_if,
+                param->read.conn_id,
+                param->read.trans_id,
+                ESP_GATT_OK,
+                &rsp);
         }
         else if (handle == wifi_password_handle)
         {
@@ -124,26 +197,53 @@ static void gatts_event_handler(esp_gatts_cb_event_t event,
             // Sensitive: block read or return nothing
             value_ptr = NULL;
             len = 0;
+
+            esp_gatt_rsp_t rsp;
+            memset(&rsp, 0, sizeof(rsp)); // zero init
+
+            rsp.attr_value.handle = handle;
+            rsp.attr_value.len = len;
+
+            // Copy the actual value into the array
+            if (value_ptr && len > 0)
+            {
+                memcpy(rsp.attr_value.value, value_ptr, len);
+            }
+
+            esp_ble_gatts_send_response(
+                gatts_if,
+                param->read.conn_id,
+                param->read.trans_id,
+                ESP_GATT_OK,
+                &rsp);
         }
-
-        esp_gatt_rsp_t rsp;
-        memset(&rsp, 0, sizeof(rsp)); // zero init
-
-        rsp.attr_value.handle = handle;
-        rsp.attr_value.len = len;
-
-        // Copy the actual value into the array
-        if (value_ptr && len > 0)
+        else if (handle == rtc_epoch_handle)
         {
-            memcpy(rsp.attr_value.value, value_ptr, len);
-        }
+            ESP_LOGI(TAG, "Client Reading the RTC Epoch Time.");
 
-        esp_ble_gatts_send_response(
-            gatts_if,
-            param->read.conn_id,
-            param->read.trans_id,
-            ESP_GATT_OK,
-            &rsp);
+            // Get current RTC/Unix time
+            time_t now;
+            time(&now);
+
+            // Prepare GATT response
+            esp_gatt_rsp_t rsp;
+            memset(&rsp, 0, sizeof(rsp));
+
+            rsp.attr_value.handle = handle;
+            rsp.attr_value.len = sizeof(now); // 8 bytes on ESP-IDF 64-bit time_t
+
+            memcpy(rsp.attr_value.value, &now, sizeof(now));
+
+            ESP_LOGI(TAG, "Epoch Time Returning to BLE Client: %ld", (long)now);
+
+            // Send the response
+            esp_ble_gatts_send_response(
+                gatts_if,
+                param->read.conn_id,
+                param->read.trans_id,
+                ESP_GATT_OK,
+                &rsp);
+        }
 
         break;
     }
@@ -180,7 +280,7 @@ static void gatts_event_handler(esp_gatts_cb_event_t event,
                 rsp.attr_value.handle = param->write.handle; // must set handle
                 rsp.attr_value.len = 0;                      // no data needed for simple write
 
-                                // Update characteristic length in the BLE stack
+                // Update characteristic length in the BLE stack
                 esp_attr_value_t char_val = {
                     .attr_max_len = sizeof(b_wifi_password),
                     .attr_len = len,
@@ -273,6 +373,41 @@ static void gatts_event_handler(esp_gatts_cb_event_t event,
                 );
             }
         }
+        else if (param->write.handle == rtc_epoch_handle)
+        {
+            uint32_t value;
+            memcpy(&value, param->write.value, sizeof(uint32_t));
+            rtc_epoch_time = value;
+
+            struct timeval tv = {
+                .tv_sec = rtc_epoch_time,
+                .tv_usec = 0};
+
+            settimeofday(&tv, NULL);
+
+            time_t now;
+            time(&now);
+
+            struct tm utc_tm;
+            gmtime_r(&now, &utc_tm);
+
+            ESP_LOGI(TAG, "Updated RTC UTC time: %s", asctime(&utc_tm));
+            // nvs_set_ssid(ssid);
+
+            esp_gatt_rsp_t rsp;
+            memset(&rsp, 0, sizeof(rsp));                // zero-initialize
+            rsp.attr_value.handle = param->write.handle; // must set handle
+            rsp.attr_value.len = 0;                      // no data needed for simple write
+
+            // Send OK response to client
+            esp_ble_gatts_send_response(
+                gatts_if,
+                param->write.conn_id,
+                param->write.trans_id,
+                ESP_GATT_OK, // indicate success
+                &rsp         // no additional data needed
+            );
+        }
 
         break;
     }
@@ -335,6 +470,11 @@ static void gatts_event_handler(esp_gatts_cb_event_t event,
                 wifi_password_handle = param->add_char.attr_handle;
                 ESP_LOGI(TAG, "WifiPassword Characteristic Added : Characteristic UUID = %i Handle = %i", &uuid, wifi_password_handle);
             }
+            else if (uuid == rtc_epoch_time_uuid.uuid.uuid16)
+            {
+                rtc_epoch_handle = param->add_char.attr_handle;
+                ESP_LOGI(TAG, "RTCTimeEpoch Characteristic Added : Characteristic UUID = %i Handle = %i", &uuid, rtc_epoch_handle);
+            }
         }
 
         break;
@@ -387,20 +527,6 @@ static void gatts_event_handler(esp_gatts_cb_event_t event,
                                &char_val,
                                NULL);
 
-        // ESP_ERROR_CHECK(nvs_set_ssid("SSID_COOL"));
-        esp_err_t err = nvs_get_ssid(ssid, sizeof(ssid));
-        if (err != ESP_OK)
-        {
-            ESP_LOGW(TAG, "SSID not found in NVS, starting empty");
-            ssid[0] = '\0'; // ensure buffer is empty
-        }
-        else
-        {
-            ESP_LOGI(TAG, "SSID loaded from NVS as initial characteristic value : %s", ssid);
-        }
-
-        ESP_LOGI(TAG, "SSID loaded from NVS, value=%s", ssid);
-
         char_val.attr_max_len = sizeof(ssid);
         char_val.attr_len = strlen(ssid);
         char_val.attr_value = (uint8_t *)ssid;
@@ -423,6 +549,17 @@ static void gatts_event_handler(esp_gatts_cb_event_t event,
                                &char_val,
                                NULL);
 
+        char_val.attr_max_len = sizeof(rtc_epoch_time);
+        char_val.attr_len = sizeof(rtc_epoch_time);
+        char_val.attr_value = (uint8_t *)&rtc_epoch_time;
+
+        esp_ble_gatts_add_char(service_handle,
+                               &rtc_epoch_time_uuid,
+                               ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
+                               ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE,
+                               &char_val,
+                               NULL);
+
         ESP_LOGI(TAG, "Starting Advertising.");
 
         start_advertising();
@@ -441,9 +578,8 @@ esp_err_t ble_config_server_init(void)
     ESP_ERROR_CHECK(nvs_config_init());
     ESP_ERROR_CHECK(nvs_snvs_init());
 
-    memcpy(server_url,"A New Value",MAX_SERVER_LEN);
-    server_url[MAX_SERVER_LEN] = '\0';
-    nvs_set_server_url(server_url);
+    setenv("TZ", "UTC0", 1);
+    tzset();
 
     esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
 
@@ -459,6 +595,27 @@ esp_err_t ble_config_server_init(void)
 
     ESP_ERROR_CHECK(esp_ble_gatts_register_callback(gatts_event_handler));
     ESP_ERROR_CHECK(esp_ble_gatts_app_register(0));
+
+    return ESP_OK;
+}
+
+esp_err_t setRtcTime(int epochSeconds)
+{
+    time_t epoch = 1772548570;
+
+    struct timeval tv = {
+        .tv_sec = epoch,
+        .tv_usec = 0};
+
+    settimeofday(&tv, NULL);
+
+    time_t now;
+    time(&now);
+
+    struct tm utc_tm;
+    gmtime_r(&now, &utc_tm);
+
+    ESP_LOGI(TAG, "Current UTC time: %s", asctime(&utc_tm));
 
     return ESP_OK;
 }
