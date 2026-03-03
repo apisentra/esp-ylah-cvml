@@ -25,6 +25,15 @@
 #include "tasks/write_sd.h"
 #include "helpers.h"
 
+#include "esp_log.h"
+#include "esp_bt.h"
+#include "esp_gap_ble_api.h"
+#include "esp_gatts_api.h"
+#include "esp_bt_main.h"
+#include "nvs_flash.h"
+#include "nvs_sec_provider.h"
+#include "ble_config_server.h"
+
 RTC_DATA_ATTR int boot_count = 0;
 
 bool save_to_sd_enabled = SAVE_TO_SD;
@@ -51,6 +60,10 @@ esp_err_t save_to_sd(char *path, uint8_t *data, size_t len)
 
 void app_main(void)
 {
+    // Start BLE GATT server
+    ble_config_server_init();
+
+    ESP_LOGI("BLE", "BLE Initialized - Ready to create services/characteristics");
 
 #ifdef SAVE_TO_SD
     if (mount_sdcard() != ESP_OK)
@@ -64,8 +77,6 @@ void app_main(void)
              heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 
     boot_count++;
-
-    // ============ CAPTURE IMAGES ================
 
     ESP_ERROR_CHECK(init_camera_x(PIXFORMAT_YUV422, FRAMESIZE_SVGA));
 
@@ -94,25 +105,6 @@ void app_main(void)
 
     ESP_LOGI("APP", "Freed malloc for JPEG conversion.", len);
 
-//     uint8_t *gs = heap_caps_malloc(rgb565->height * rgb565->width * 2, MALLOC_CAP_SPIRAM);
-
-//     yuv422_to_gray(rgb565->buf, gs, rgb565->width, rgb565->height);
-
-//     uint8_t *gsyuv = heap_caps_malloc(rgb565->height * rgb565->width * 2, MALLOC_CAP_SPIRAM);
-
-//     gray_to_yuv422(gs, gsyuv, rgb565->width, rgb565->height);
-
-//      uint8_t *out2 = NULL;
-//     size_t len2 = 0;
-
-//     camera_fb_t yuv = {
-// .buf = gsyuv,
-// .format = PIXFORMAT_YUV422,
-// .len = ???
-//     };
-
-//     frame2jpg(gsyuv, 80, &out2, &len2);
-
     multi_heap_info_t info;
     heap_caps_get_info(&info, MALLOC_CAP_SPIRAM);
     ESP_LOGI("MEM", "PSRAM total: %u, free: %u, largest block: %u", info.total_free_bytes, info.total_allocated_bytes, info.largest_free_block);
@@ -123,5 +115,5 @@ void app_main(void)
 
     ESP_LOGI("MAIN", "DONE - Going to Sleep!");
 
-    esp_deep_sleep(250);
+    // esp_deep_sleep(30000000);
 }

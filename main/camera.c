@@ -6,6 +6,7 @@
 #include "esp_system.h"
 
 
+
 esp_err_t init_camera_x(pixformat_t pixformat, framesize_t framesize_t)
 {
     camera_config_t config;

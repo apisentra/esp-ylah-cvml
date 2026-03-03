@@ -1,0 +1,4 @@
+# Name, Type, SubType, Offset, Size, Flags
+nvs, data, nvs, 0x90000, 0x6000, encrypted
+snvs, data, nvs, 0x96000, 0x6000, encrypted
+app0, app, ota_0, 0x100000, 1M
